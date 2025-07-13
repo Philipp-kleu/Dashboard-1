@@ -297,21 +297,24 @@ st.title(" Technology Decision Tool")
 DEFAULT_EXCEL_URL = "https://raw.githubusercontent.com/PhilippKleu/Dashboard/develope/vertex_results_default.xlsx"
 
 # Funktion zum Laden der Excel-Datei über URL
+
 def load_default_excel_from_url(url):
     response = requests.get(url)
     if response.status_code != 200:
         raise ValueError("❌ Standarddatei konnte nicht geladen werden.")
     return pd.read_excel(BytesIO(response.content))
 
-if not st.session_state.get("excel_loaded", False):
+# === Upload-Bereich, falls Excel noch nicht geladen ===
+if "excel_loaded" not in st.session_state:
+    st.session_state["excel_loaded"] = False
 
+if not st.session_state["excel_loaded"]:
     st.subheader("📂 Excel-Datei auswählen")
-    col1, spacer, col2 = st.columns([2, 0.3, 1])
+    col1, _, col2 = st.columns([2, 0.3, 1])
 
     with col1:
         upload_file = st.file_uploader("📤 Eigene Excel-Datei hochladen (.xlsx)", type=["xlsx"])
-        # Upload in Session speichern, falls vorhanden
-        if upload_file is not None:
+        if upload_file:
             st.session_state["uploaded_file"] = upload_file
             st.session_state["use_default_excel"] = False
 
@@ -319,48 +322,44 @@ if not st.session_state.get("excel_loaded", False):
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("📁 Standard-Excel verwenden"):
             st.session_state["use_default_excel"] = True
-            # Entferne eventuell vorhandene Upload-Datei, damit keine Verwirrung entsteht
             if "uploaded_file" in st.session_state:
                 del st.session_state["uploaded_file"]
 
     uploaded_file = st.session_state.get("uploaded_file", None)
     use_default_excel = st.session_state.get("use_default_excel", False)
 
-    # Nur fortfahren, wenn eine der beiden Optionen gewählt wurde
-    if use_default_excel or uploaded_file is not None:
-        st.subheader("Excel Read-In method")
+    if uploaded_file or use_default_excel:
+        st.subheader("Excel Read-In Methode wählen")
 
         option = st.selectbox(
             "Choose Option:",
             ["", "📥 Read-in all vertices", "📊 Apply clustering to retain representative vertices"]
         )
 
+        # === Variante 1: Komplett einlesen ===
         if option == "📥 Read-in all vertices":
             if st.button("Read-in Excel File"):
                 try:
                     df = load_default_excel_from_url(DEFAULT_EXCEL_URL) if use_default_excel else pd.read_excel(uploaded_file)
                     st.session_state["uploaded_excel"] = df.copy()
                     st.session_state["excel_loaded"] = True
-                    st.session_state["excel_error"] = None
-                    st.rerun()
+                    st.success("✅ Excel-Datei erfolgreich geladen!")
                 except Exception as e:
-                    st.session_state["excel_error"] = f"❌ Fehler beim Einlesen: {e}"
+                    st.error(f"❌ Fehler beim Einlesen: {e}")
 
+        # === Variante 2: Clustering anwenden ===
         elif option == "📊 Apply clustering to retain representative vertices":
             k_value = st.number_input(
                 "Number of representative vertices to retain (KMeans)",
                 min_value=50,
                 max_value=5000,
                 value=1000,
-                step=50,
-                key="clustering_k"
+                step=50
             )
 
             if st.button("Apply Clustering and Read-in"):
                 try:
                     df = load_default_excel_from_url(DEFAULT_EXCEL_URL) if use_default_excel else pd.read_excel(uploaded_file)
-                    amount_vertices_requested = int(k_value)
-
                     coeff_columns = [col for col in df.columns if col.startswith("COEFF_")]
                     if not coeff_columns:
                         raise ValueError("❌ Keine COEFF_-Spalten gefunden.")
@@ -370,22 +369,14 @@ if not st.session_state.get("excel_loaded", False):
                     df_first_part = df.loc[:last_index_with_minus1].copy()
                     df_remaining = df.loc[last_index_with_minus1 + 1:].copy()
 
-                    if amount_vertices_requested >= len(df):
-                        st.session_state["uploaded_excel"] = df.copy()
-                        st.session_state["excel_loaded"] = True
-                        st.session_state["excel_error"] = None
-                        st.rerun()
-
-                    elif amount_vertices_requested <= len(df_first_part):
-                        st.session_state["uploaded_excel"] = df_first_part.copy()
-                        st.session_state["excel_loaded"] = True
-                        st.session_state["excel_error"] = None
-                        st.rerun()
-
+                    if k_value >= len(df):
+                        df_final = df.copy()
+                    elif k_value <= len(df_first_part):
+                        df_final = df_first_part.copy()
                     else:
                         cluster_columns = [col for col in df.columns if col.startswith("VALUE_") or col.startswith("MAA_")]
                         df_remaining_unique = df_remaining.drop_duplicates(subset=cluster_columns)
-                        remaining_target = amount_vertices_requested - len(df_first_part)
+                        remaining_target = k_value - len(df_first_part)
 
                         if len(df_remaining_unique) > remaining_target:
                             X = df_remaining_unique[cluster_columns].fillna(0).to_numpy()
@@ -397,16 +388,13 @@ if not st.session_state.get("excel_loaded", False):
                             df_clustered = df_remaining_unique.copy()
 
                         df_final = pd.concat([df_first_part, df_clustered], ignore_index=True)
-                        st.session_state["uploaded_excel"] = df_final.copy()
-                        st.session_state["excel_loaded"] = True
-                        st.session_state["excel_error"] = None
-                        st.rerun()
+
+                    st.session_state["uploaded_excel"] = df_final.copy()
+                    st.session_state["excel_loaded"] = True
+                    st.success("✅ Excel-Datei erfolgreich geclustert und geladen!")
 
                 except Exception as e:
-                    st.session_state["excel_error"] = f"❌ Fehler beim Clustern: {e}"
-
-    if st.session_state.get("excel_error"):
-        st.error(st.session_state["excel_error"])
+                    st.error(f"❌ Fehler beim Clustern: {e}")
 
     st.stop()
 
